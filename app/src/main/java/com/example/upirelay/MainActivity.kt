@@ -4,6 +4,8 @@ import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Color
+import android.graphics.Typeface
 import android.os.Bundle
 import android.provider.Settings
 import android.text.InputType
@@ -13,6 +15,8 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 
 class MainActivity : AppCompatActivity() {
+
+    private lateinit var logTextView: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -32,13 +36,14 @@ class MainActivity : AppCompatActivity() {
         val scrollView = ScrollView(this)
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(60, 80, 60, 80)
+            setPadding(50, 60, 50, 60)
         }
 
         val titleText = TextView(this).apply {
-            text = "UPI Gateway Relay Settings"
-            textSize = 20f
-            setPadding(0, 0, 0, 40)
+            text = "UPI Gateway Relay"
+            textSize = 22f
+            setTypeface(null, Typeface.BOLD)
+            setPadding(0, 0, 0, 30)
         }
 
         val urlLabel = TextView(this).apply { text = "Webhook URL (webhook.php):" }
@@ -50,17 +55,12 @@ class MainActivity : AppCompatActivity() {
 
         val secretLabel = TextView(this).apply {
             text = "Secret Key:"
-            setPadding(0, 30, 0, 0)
+            setPadding(0, 20, 0, 0)
         }
         val secretInput = EditText(this).apply {
             hint = "MY_SUPER_SECRET_TOKEN_123"
             inputType = InputType.TYPE_CLASS_TEXT
             setText(prefs.getString("secret_key", ""))
-        }
-
-        val statusText = TextView(this).apply {
-            text = "Status: Ready"
-            setPadding(0, 40, 0, 20)
         }
 
         // Save Settings Button
@@ -75,8 +75,8 @@ class MainActivity : AppCompatActivity() {
                     .putString("secret_key", secret)
                     .apply()
 
-                statusText.text = "Status: Settings Saved Successfully!"
-                Toast.makeText(this@MainActivity, "Saved!", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this@MainActivity, "Settings Saved!", Toast.LENGTH_SHORT).show()
+                refreshLogs()
             }
         }
 
@@ -84,15 +84,12 @@ class MainActivity : AppCompatActivity() {
         val testBtn = Button(this).apply {
             text = "Send Test Payment Alert (₹1.00)"
             setOnClickListener {
-                statusText.text = "Status: Sending test payload..."
                 WebhookClient.sendToDatabase(
                     applicationContext,
                     "TEST_BUTTON",
                     "Test Alert: Rs. 1.00 credited to your account via UPI Ref 123456789012."
-                ) { resultMsg ->
-                    runOnUiThread {
-                        statusText.text = "Status: $resultMsg"
-                    }
+                ) {
+                    runOnUiThread { refreshLogs() }
                 }
             }
         }
@@ -105,7 +102,34 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Add all elements to the screen
+        // Refresh & Clear Log Buttons
+        val refreshBtn = Button(this).apply {
+            text = "Refresh Activity Logs"
+            setOnClickListener { refreshLogs() }
+        }
+
+        val clearBtn = Button(this).apply {
+            text = "Clear Logs"
+            setOnClickListener {
+                prefs.edit().putString("activity_logs", "Logs cleared.").apply()
+                refreshLogs()
+            }
+        }
+
+        val logHeader = TextView(this).apply {
+            text = "Recent Intercepted Alerts & Server Responses:"
+            setTypeface(null, Typeface.BOLD)
+            setPadding(0, 40, 0, 10)
+        }
+
+        logTextView = TextView(this).apply {
+            textSize = 12f
+            typeface = Typeface.MONOSPACE
+            setBackgroundColor(Color.parseColor("#F3F4F6"))
+            setTextColor(Color.parseColor("#111827"))
+            setPadding(24, 24, 24, 24)
+        }
+
         layout.apply {
             addView(titleText)
             addView(urlLabel)
@@ -115,10 +139,24 @@ class MainActivity : AppCompatActivity() {
             addView(saveBtn)
             addView(testBtn)
             addView(notifBtn)
-            addView(statusText)
+            addView(refreshBtn)
+            addView(clearBtn)
+            addView(logHeader)
+            addView(logTextView)
         }
 
         scrollView.addView(layout)
         setContentView(scrollView)
+        refreshLogs()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        refreshLogs()
+    }
+
+    private fun refreshLogs() {
+        val prefs = getSharedPreferences("UpiRelayPrefs", Context.MODE_PRIVATE)
+        logTextView.text = prefs.getString("activity_logs", "No alerts captured yet.")
     }
 }
