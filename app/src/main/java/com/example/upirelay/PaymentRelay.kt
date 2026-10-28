@@ -10,9 +10,21 @@ import org.json.JSONObject
 import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.URL
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlin.concurrent.thread
 
 object WebhookClient {
+
+    private fun appendLog(context: Context, entry: String) {
+        val prefs = context.getSharedPreferences("UpiRelayPrefs", Context.MODE_PRIVATE)
+        val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
+        val existing = prefs.getString("activity_logs", "") ?: ""
+        val lines = existing.split("\n---\n").take(9) // Keep last 10 logs
+        val updated = "[$time] $entry" + if (existing.isNotEmpty()) "\n---\n" + lines.joinToString("\n---\n") else ""
+        prefs.edit().putString("activity_logs", updated).apply()
+    }
 
     fun sendToDatabase(
         context: Context,
@@ -25,7 +37,9 @@ object WebhookClient {
         val secretKey = prefs.getString("secret_key", "")?.trim() ?: ""
 
         if (webhookUrl.isEmpty()) {
-            callback?.invoke("Error: Webhook URL is empty!")
+            val err = "Error: Webhook URL is empty! Save settings first."
+            appendLog(context, "$source -> $err")
+            callback?.invoke(err)
             return
         }
 
@@ -47,18 +61,27 @@ object WebhookClient {
 
                 OutputStreamWriter(conn.outputStream).use { it.write(json.toString()) }
                 val responseCode = conn.responseCode
+                val responseBody = try {
+                    conn.inputStream.bufferedReader().use { it.readText() }
+                } catch (e: Exception) {
+                    "No response body"
+                }
                 conn.disconnect()
 
-                callback?.invoke("Server responded with HTTP $responseCode")
+                val statusMsg = "HTTP $responseCode | $responseBody\nMsg: $message"
+                appendLog(context, "[$source] $statusMsg")
+                callback?.invoke(statusMsg)
             } catch (e: Exception) {
                 e.printStackTrace()
-                callback?.invoke("Failed: ${e.localizedMessage}")
+                val failMsg = "Failed: ${e.localizedMessage}\nMsg: $message"
+                appendLog(context, "[$source] $failMsg")
+                callback?.invoke(failMsg)
             }
         }
     }
 }
 
-// 1. Intercepts Google Pay, PhonePe, Paytm, and Bank App Notifications
+// 1. Intercepts Google Pay, PhonePe, Paytm, BHIM, and Bank App Notifications
 class UpiNotificationListener : NotificationListenerService() {
     private val targetApps = setOf(
         "com.google.android.apps.nbu.paisa.user", // Google Pay
@@ -73,10 +96,16 @@ class UpiNotificationListener : NotificationListenerService() {
         val extras = sbn.notification?.extras ?: return
         val title = extras.getCharSequence("android.title")?.toString() ?: ""
         val text = extras.getCharSequence("android.text")?.toString() ?: ""
-        val combinedText = "$title $text"
+        val combinedText = "$title $text".trim()
 
-        if (pkg in targetApps || combinedText.contains("credited", ignoreCase = true) || combinedText.contains("received", ignoreCase = true)) {
-            WebhookClient.sendToDatabase(applicationContext, pkg, combinedText)
+        if (combinedText.isEmpty()) return
+
+        if (pkg in targetApps ||
+            combinedText.contains("credited", ignoreCase = true) ||
+            combinedText.contains("received", ignoreCase = true) ||
+            combinedText.contains("paid you", ignoreCase = true)
+        ) {
+            WebhookClient.sendToDatabase(applicationContext, "NOTIF:$pkg", combinedText)
         }
     }
 }
@@ -89,7 +118,10 @@ class SmsReceiver : BroadcastReceiver() {
             val fullSms = messages.joinToString(separator = "") { it.messageBody }
             val sender = messages.firstOrNull()?.originatingAddress ?: "SMS"
 
-            if (fullSms.contains("credited", ignoreCase = true) || fullSms.contains("UPI", ignoreCase = true)) {
+            if (fullSms.contains("credited", ignoreCase = true) ||
+                fullSms.contains("received", ignoreCase = true) ||
+                fullSms.contains("UPI", ignoreCase = true)
+            ) {
                 WebhookClient.sendToDatabase(context.applicationContext, "SMS:$sender", fullSms)
             }
         }
