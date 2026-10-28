@@ -13,30 +13,46 @@ import java.net.URL
 import kotlin.concurrent.thread
 
 object WebhookClient {
-    // Replace with your live server URL and secret token
-    private const val WEBHOOK_URL = "https://yourwebsite.com/webhook.php"
-    private const val SECRET_KEY = "MY_SUPER_SECRET_TOKEN_123"
 
-    fun sendToDatabase(source: String, message: String) {
+    fun sendToDatabase(
+        context: Context,
+        source: String,
+        message: String,
+        callback: ((String) -> Unit)? = null
+    ) {
+        val prefs = context.getSharedPreferences("UpiRelayPrefs", Context.MODE_PRIVATE)
+        val webhookUrl = prefs.getString("webhook_url", "")?.trim() ?: ""
+        val secretKey = prefs.getString("secret_key", "")?.trim() ?: ""
+
+        if (webhookUrl.isEmpty()) {
+            callback?.invoke("Error: Webhook URL is empty!")
+            return
+        }
+
         thread {
             try {
-                val url = URL(WEBHOOK_URL)
+                val url = URL(webhookUrl)
                 val conn = url.openConnection() as HttpURLConnection
                 conn.requestMethod = "POST"
+                conn.connectTimeout = 10000
+                conn.readTimeout = 10000
                 conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8")
                 conn.doOutput = true
 
                 val json = JSONObject().apply {
-                    put("secret", SECRET_KEY)
+                    put("secret", secretKey)
                     put("source", source)
                     put("message", message)
                 }
 
                 OutputStreamWriter(conn.outputStream).use { it.write(json.toString()) }
-                conn.responseCode // Triggers the request
+                val responseCode = conn.responseCode
                 conn.disconnect()
+
+                callback?.invoke("Server responded with HTTP $responseCode")
             } catch (e: Exception) {
                 e.printStackTrace()
+                callback?.invoke("Failed: ${e.localizedMessage}")
             }
         }
     }
@@ -48,7 +64,8 @@ class UpiNotificationListener : NotificationListenerService() {
         "com.google.android.apps.nbu.paisa.user", // Google Pay
         "com.phonepe.app",                        // PhonePe
         "net.one97.paytm",                        // Paytm
-        "com.freecharge.android"                  // Freecharge
+        "com.freecharge.android",                 // Freecharge
+        "in.org.npci.upiapp"                      // BHIM
     )
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
@@ -58,9 +75,8 @@ class UpiNotificationListener : NotificationListenerService() {
         val text = extras.getCharSequence("android.text")?.toString() ?: ""
         val combinedText = "$title $text"
 
-        // Forward if it comes from a UPI app OR contains ₹ / Rs credit keywords
-        if (pkg in targetApps || combinedText.contains("credited", ignoreCase = true)) {
-            WebhookClient.sendToDatabase(pkg, combinedText)
+        if (pkg in targetApps || combinedText.contains("credited", ignoreCase = true) || combinedText.contains("received", ignoreCase = true)) {
+            WebhookClient.sendToDatabase(applicationContext, pkg, combinedText)
         }
     }
 }
@@ -74,7 +90,7 @@ class SmsReceiver : BroadcastReceiver() {
             val sender = messages.firstOrNull()?.originatingAddress ?: "SMS"
 
             if (fullSms.contains("credited", ignoreCase = true) || fullSms.contains("UPI", ignoreCase = true)) {
-                WebhookClient.sendToDatabase("SMS:$sender", fullSms)
+                WebhookClient.sendToDatabase(context.applicationContext, "SMS:$sender", fullSms)
             }
         }
     }
