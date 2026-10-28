@@ -33,19 +33,22 @@ object WebhookClient {
         callback: ((String) -> Unit)? = null
     ) {
         val prefs = context.getSharedPreferences("UpiRelayPrefs", Context.MODE_PRIVATE)
-        val webhookUrl = prefs.getString("webhook_url", "")?.trim() ?: ""
+        val baseUrl = prefs.getString("webhook_url", "")?.trim() ?: ""
         val secretKey = prefs.getString("secret_key", "")?.trim() ?: ""
 
-        if (webhookUrl.isEmpty()) {
-            val err = "Error: Webhook URL is empty! Save settings first."
+        if (baseUrl.isEmpty()) {
+            val err = "Error: Webhook URL is empty!"
             appendLog(context, "$source -> $err")
             callback?.invoke(err)
             return
         }
 
+        // Append secret key as a URL query parameter to bypass free hosting firewalls
+        val finalUrlString = if (baseUrl.contains("?")) "$baseUrl&secret=$secretKey" else "$baseUrl?secret=$secretKey"
+
         thread {
             try {
-                val url = URL(webhookUrl)
+                val url = URL(finalUrlString)
                 val conn = url.openConnection() as HttpURLConnection
                 conn.requestMethod = "POST"
                 conn.connectTimeout = 10000
@@ -54,7 +57,6 @@ object WebhookClient {
                 conn.doOutput = true
 
                 val json = JSONObject().apply {
-                    put("secret", secretKey)
                     put("source", source)
                     put("message", message)
                 }
@@ -68,12 +70,12 @@ object WebhookClient {
                 }
                 conn.disconnect()
 
-                val statusMsg = "HTTP $responseCode | $responseBody\nMsg: $message"
+                val statusMsg = "HTTP $responseCode | $responseBody"
                 appendLog(context, "[$source] $statusMsg")
                 callback?.invoke(statusMsg)
             } catch (e: Exception) {
                 e.printStackTrace()
-                val failMsg = "Failed: ${e.localizedMessage}\nMsg: $message"
+                val failMsg = "Failed: ${e.localizedMessage}"
                 appendLog(context, "[$source] $failMsg")
                 callback?.invoke(failMsg)
             }
