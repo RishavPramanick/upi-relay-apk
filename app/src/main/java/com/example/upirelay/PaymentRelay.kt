@@ -9,9 +9,6 @@ import android.provider.Telephony
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.webkit.CookieManager
-import android.webkit.JavascriptInterface
-import android.webkit.WebResourceError
-import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import java.net.URLEncoder
@@ -52,7 +49,6 @@ object WebhookClient {
                 val encodedMsg = URLEncoder.encode(message, "UTF-8")
                 val encodedSrc = URLEncoder.encode(source, "UTF-8")
                 
-                // Construct URL with query parameters so the server handles it instantly via GET/POST
                 val finalUrl = "$baseUrl?secret=$secretKey&source=$encodedSrc&message=$encodedMsg"
 
                 val webView = WebView(context).apply {
@@ -61,37 +57,25 @@ object WebhookClient {
                     settings.loadsImagesAutomatically = false
                 }
 
-                // Enable cookie persistence so Unaux aes.js validation cookies are saved
                 CookieManager.getInstance().setAcceptCookie(true)
                 CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true)
 
                 webView.webViewClient = object : WebViewClient() {
                     override fun onPageFinished(view: WebView?, url: String?) {
                         super.onPageFinished(view, url)
-                        // Extract the page body JSON response
                         view?.evaluateJavascript("document.body.innerText") { response ->
                             val cleanResponse = response?.trim('"')?.replace("\\\\", "") ?: "No response body"
                             val statusMsg = "WebView OK | $cleanResponse\nMsg: $message"
                             appendLog(context, "[$source] $statusMsg")
                             callback?.invoke(statusMsg)
                             
-                            // Clean up WebView after a brief delay
                             Handler(Looper.getMainLooper()).postDelayed({
                                 try { webView.destroy() } catch (e: Exception) {}
                             }, 1000)
                         }
                     }
-
-                    override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
-                        super.onReceivedError(view, request, error)
-                        val errCode = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) error?.errorCode else -1
-                        val failMsg = "WebView Error Code: $errCode\nMsg: $message"
-                        appendLog(context, "[$source] $failMsg")
-                        callback?.invoke(failMsg)
-                    }
                 }
 
-                // Load the URL to bypass aes.js and trigger webhook.php
                 webView.loadUrl(finalUrl)
 
             } catch (e: Exception) {
@@ -104,18 +88,16 @@ object WebhookClient {
     }
 }
 
-// 1. Intercepts Google Pay, PhonePe, Paytm, BHIM, and Bank App Notifications
+// RESTRICTED EXCLUSIVELY TO GOOGLE PAY NOTIFICATIONS
 class UpiNotificationListener : NotificationListenerService() {
-    private val targetApps = setOf(
-        "com.google.android.apps.nbu.paisa.user", // Google Pay
-        "com.phonepe.app",                        // PhonePe
-        "net.one97.paytm",                        // Paytm
-        "com.freecharge.android",                 // Freecharge
-        "in.org.npci.upiapp"                      // BHIM
-    )
+    private val googlePayPkg = "com.google.android.apps.nbu.paisa.user"
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         val pkg = sbn?.packageName ?: return
+        
+        // Ignore any notification that does NOT come from Google Pay
+        if (pkg != googlePayPkg) return
+
         val extras = sbn.notification?.extras ?: return
         val title = extras.getCharSequence("android.title")?.toString() ?: ""
         val text = extras.getCharSequence("android.text")?.toString() ?: ""
@@ -123,17 +105,16 @@ class UpiNotificationListener : NotificationListenerService() {
 
         if (combinedText.isEmpty()) return
 
-        if (pkg in targetApps ||
-            combinedText.contains("credited", ignoreCase = true) ||
+        if (combinedText.contains("credited", ignoreCase = true) ||
             combinedText.contains("received", ignoreCase = true) ||
             combinedText.contains("paid you", ignoreCase = true)
         ) {
-            WebhookClient.sendToDatabase(applicationContext, "NOTIF:$pkg", combinedText)
+            WebhookClient.sendToDatabase(applicationContext, "GPAY:$pkg", combinedText)
         }
     }
 }
 
-// 2. Intercepts Standard Bank SMS Messages
+// Standard SMS Receiver (Kept active for direct bank SMS alerts if needed)
 class SmsReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action == Telephony.Sms.Intents.SMS_RECEIVED_ACTION) {
