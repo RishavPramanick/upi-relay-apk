@@ -3,17 +3,20 @@ package com.example.upirelay
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.os.Handler
+import android.os.Looper
 import android.provider.Telephony
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
-import org.json.JSONObject
-import java.io.OutputStreamWriter
-import java.net.HttpURLConnection
-import java.net.URL
+import android.webkit.CookieManager
+import android.webkit.JavascriptInterface
+import android.webkit.WebResourceError
+import android.webkit.WebResourceRequest
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import java.net.URLEncoder
 import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
-import kotlin.concurrent.thread
+import java.util.*
 
 object WebhookClient {
 
@@ -43,39 +46,57 @@ object WebhookClient {
             return
         }
 
-        // Append secret key as a URL query parameter to bypass free hosting firewalls
-        val finalUrlString = if (baseUrl.contains("?")) "$baseUrl&secret=$secretKey" else "$baseUrl?secret=$secretKey"
-
-        thread {
+        // Run WebView operations strictly on the Main Thread
+        Handler(Looper.getMainLooper()).post {
             try {
-                val url = URL(finalUrlString)
-                val conn = url.openConnection() as HttpURLConnection
-                conn.requestMethod = "POST"
-                conn.connectTimeout = 10000
-                conn.readTimeout = 10000
-                conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8")
-                conn.doOutput = true
+                val encodedMsg = URLEncoder.encode(message, "UTF-8")
+                val encodedSrc = URLEncoder.encode(source, "UTF-8")
+                
+                // Construct URL with query parameters so the server handles it instantly via GET/POST
+                val finalUrl = "$baseUrl?secret=$secretKey&source=$encodedSrc&message=$encodedMsg"
 
-                val json = JSONObject().apply {
-                    put("source", source)
-                    put("message", message)
+                val webView = WebView(context).apply {
+                    settings.javaScriptEnabled = true
+                    settings.domStorageEnabled = true
+                    settings.loadsImagesAutomatically = false
                 }
 
-                OutputStreamWriter(conn.outputStream).use { it.write(json.toString()) }
-                val responseCode = conn.responseCode
-                val responseBody = try {
-                    conn.inputStream.bufferedReader().use { it.readText() }
-                } catch (e: Exception) {
-                    "No response body"
-                }
-                conn.disconnect()
+                // Enable cookie persistence so Unaux aes.js validation cookies are saved
+                CookieManager.getInstance().setAcceptCookie(true)
+                CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true)
 
-                val statusMsg = "HTTP $responseCode | $responseBody"
-                appendLog(context, "[$source] $statusMsg")
-                callback?.invoke(statusMsg)
+                webView.webViewClient = object : WebViewClient() {
+                    override fun onPageFinished(view: WebView?, url: String?) {
+                        super.onPageFinished(view, url)
+                        // Extract the page body JSON response
+                        view?.evaluateJavascript("document.body.innerText") { response ->
+                            val cleanResponse = response?.trim('"')?.replace("\\\\", "") ?: "No response body"
+                            val statusMsg = "WebView OK | $cleanResponse\nMsg: $message"
+                            appendLog(context, "[$source] $statusMsg")
+                            callback?.invoke(statusMsg)
+                            
+                            // Clean up WebView after a brief delay
+                            Handler(Looper.getMainLooper()).postDelayed({
+                                try { webView.destroy() } catch (e: Exception) {}
+                            }, 1000)
+                        }
+                    }
+
+                    override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
+                        super.onReceivedError(view, request, error)
+                        val errCode = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) error?.errorCode else -1
+                        val failMsg = "WebView Error Code: $errCode\nMsg: $message"
+                        appendLog(context, "[$source] $failMsg")
+                        callback?.invoke(failMsg)
+                    }
+                }
+
+                // Load the URL to bypass aes.js and trigger webhook.php
+                webView.loadUrl(finalUrl)
+
             } catch (e: Exception) {
                 e.printStackTrace()
-                val failMsg = "Failed: ${e.localizedMessage}"
+                val failMsg = "WebView Failed: ${e.localizedMessage}\nMsg: $message"
                 appendLog(context, "[$source] $failMsg")
                 callback?.invoke(failMsg)
             }
