@@ -32,6 +32,14 @@ class MainActivity : AppCompatActivity() {
 
         val prefs = getSharedPreferences("UpiRelayPrefs", Context.MODE_PRIVATE)
 
+        // Set default values on first launch if nothing has been saved yet
+        if (!prefs.contains("webhook_url")) {
+            prefs.edit().putString("webhook_url", "https://mathsflow.unaux.com/novamart/config/webhook.php").apply()
+        }
+        if (!prefs.contains("secret_key")) {
+            prefs.edit().putString("secret_key", "MY_SUPER_SECRET_TOKEN_123").apply()
+        }
+
         // Build UI Programmatically
         val scrollView = ScrollView(this)
         val layout = LinearLayout(this).apply {
@@ -40,7 +48,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         val titleText = TextView(this).apply {
-            text = "UPI Gateway Relay (WebView Bypass)"
+            text = "UPI Gateway Relay"
             textSize = 20f
             setTypeface(null, Typeface.BOLD)
             setPadding(0, 0, 0, 30)
@@ -50,7 +58,7 @@ class MainActivity : AppCompatActivity() {
         val urlInput = EditText(this).apply {
             hint = "https://mathsflow.unaux.com/novamart/config/webhook.php"
             inputType = InputType.TYPE_TEXT_VARIATION_URI
-            setText(prefs.getString("webhook_url", "https://mathsflow.unaux.com/novamart/config/webhook.php"))
+            setText(prefs.getString("webhook_url", ""))
         }
 
         val secretLabel = TextView(this).apply {
@@ -60,7 +68,7 @@ class MainActivity : AppCompatActivity() {
         val secretInput = EditText(this).apply {
             hint = "MY_SUPER_SECRET_TOKEN_123"
             inputType = InputType.TYPE_CLASS_TEXT
-            setText(prefs.getString("secret_key", "MY_SUPER_SECRET_TOKEN_123"))
+            setText(prefs.getString("secret_key", ""))
         }
 
         // Save Settings Button
