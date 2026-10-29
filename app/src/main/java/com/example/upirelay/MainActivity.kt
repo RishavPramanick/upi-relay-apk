@@ -40,17 +40,17 @@ class MainActivity : AppCompatActivity() {
         }
 
         val titleText = TextView(this).apply {
-            text = "UPI Gateway Relay"
-            textSize = 22f
+            text = "UPI Gateway Relay (WebView Bypass)"
+            textSize = 20f
             setTypeface(null, Typeface.BOLD)
             setPadding(0, 0, 0, 30)
         }
 
         val urlLabel = TextView(this).apply { text = "Webhook URL (webhook.php):" }
         val urlInput = EditText(this).apply {
-            hint = "https://yourwebsite.com/webhook.php"
+            hint = "https://mathsflow.unaux.com/novamart/config/webhook.php"
             inputType = InputType.TYPE_TEXT_VARIATION_URI
-            setText(prefs.getString("webhook_url", ""))
+            setText(prefs.getString("webhook_url", "https://mathsflow.unaux.com/novamart/config/webhook.php"))
         }
 
         val secretLabel = TextView(this).apply {
@@ -60,7 +60,7 @@ class MainActivity : AppCompatActivity() {
         val secretInput = EditText(this).apply {
             hint = "MY_SUPER_SECRET_TOKEN_123"
             inputType = InputType.TYPE_CLASS_TEXT
-            setText(prefs.getString("secret_key", ""))
+            setText(prefs.getString("secret_key", "MY_SUPER_SECRET_TOKEN_123"))
         }
 
         // Save Settings Button
@@ -80,16 +80,20 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Test Webhook Button (Simulates a Rs. 1.00 credit alert)
+        // Test Webhook Button (Simulates a Rs. 1.00 credit alert via WebView)
         val testBtn = Button(this).apply {
             text = "Send Test Payment Alert (₹1.00)"
             setOnClickListener {
+                Toast.makeText(this@MainActivity, "Sending via WebView...", Toast.LENGTH_SHORT).show()
                 WebhookClient.sendToDatabase(
                     applicationContext,
                     "TEST_BUTTON",
                     "Test Alert: Rs. 1.00 credited to your account via UPI Ref 123456789012."
-                ) {
-                    runOnUiThread { refreshLogs() }
+                ) { resultMsg ->
+                    runOnUiThread {
+                        Toast.makeText(this@MainActivity, "Done!", Toast.LENGTH_SHORT).show()
+                        refreshLogs()
+                    }
                 }
             }
         }
